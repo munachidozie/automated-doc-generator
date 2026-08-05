@@ -1,0 +1,6 @@
+requests
+python-dotenv
+click
+markdown
+gitpython
+pytest
