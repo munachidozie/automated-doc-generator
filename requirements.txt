@@ -6,3 +6,4 @@ gitpython
 pytest
 flask
 flask-wtf
+pytest

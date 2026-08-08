@@ -138,6 +138,13 @@
                                 </div>
                             </div>
 
+                            <!-- API Key (optional) -->
+                            <div class="mb-3">
+                                <label for="api_key" class="form-label">DeepSeek API Key <span class="text-muted">(optional – leave blank to use server default)</span></label>
+                                <input class="form-control" type="password" id="api_key" name="api_key" placeholder="sk-...">
+                                <div class="form-text">If you provide your own key, it will be used instead of the server's default.</div>
+                            </div>
+
                             <button type="submit" class="btn btn-primary w-100" id="submit-btn">Generate Documentation</button>
                         </form>
                         {% if error %}

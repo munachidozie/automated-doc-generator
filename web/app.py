@@ -43,10 +43,12 @@ def generate():
     context = request.form.get('context', '')
     language = request.form.get('language', '')
     format_choice = request.form.get('format', 'md')
+    api_key = request.form.get('api_key', '').strip() or None  # None means use default
 
     input_type = request.form.get('input_type')
     files = []
 
+    # Input handling
     if input_type == 'paste':
         code = request.form.get('code', '')
         if not code:
@@ -98,10 +100,16 @@ def generate():
         context=context
     )
 
-    doc = generate_docs(prompt, combined_code)
-    if doc is None:
-        return render_template('index.html', error="Documentation generation failed. Check logs.")
+    # Generate documentation with optional API key
+    try:
+        doc = generate_docs(prompt, combined_code, api_key=api_key)
+    except Exception as e:
+        return render_template('index.html', error=f"AI client error: {str(e)}")
 
+    if doc is None:
+        return render_template('index.html', error="Documentation generation failed. Please check your API key and try again.")
+
+    # Store in temporary file
     doc_id = str(uuid.uuid4())
     doc_path = os.path.join(DOCS_DIR, f"{doc_id}.txt")
     with open(doc_path, 'w', encoding='utf-8') as f:
@@ -129,7 +137,7 @@ def result():
     with open(doc_path, 'r', encoding='utf-8') as f:
         doc = f.read()
 
-    html_preview = markdown_to_body_html(doc)  # only body content
+    html_preview = markdown_to_body_html(doc)
 
     return render_template('result.html', title=title, doc=html_preview, format_choice=format_choice)
 
