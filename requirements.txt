@@ -4,3 +4,5 @@ click
 markdown
 gitpython
 pytest
+flask
+flask-wtf
