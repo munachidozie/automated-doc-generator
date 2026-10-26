@@ -13,7 +13,7 @@ def client():
 def test_index_page(client):
     rv = client.get('/')
     assert rv.status_code == 200
-    assert b'Automated Documentation Generator' in rv.data
+    assert b'Automatic Source Code Document Generator' in rv.data
 
 @patch('web.app.generate_docs')
 def test_generate_paste(mock_generate, client):

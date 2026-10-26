@@ -1,5 +1,6 @@
 # src/ingest.py
 import os
+import shutil
 import tempfile
 import zipfile
 from pathlib import Path
@@ -17,6 +18,16 @@ CODE_EXTENSIONS: Set[str] = {
     '.dart', '.jl', '.ex', '.exs'
 }
 
+# Directories that never contain project source worth documenting.
+IGNORED_DIRS: Set[str] = {
+    '.git', '.hg', '.svn', '.tox', '.mypy_cache', '.ruff_cache',
+    '.pytest_cache', '__pycache__', 'node_modules', 'venv', '.venv',
+    'env', '.env', 'site-packages', 'build', 'dist', '.idea', '.vscode',
+}
+
+# Skip anything larger than this (minified bundles, generated data, lockfiles).
+MAX_FILE_BYTES = 1_000_000
+
 def from_paste(code: str, filename: str = "paste_code") -> List[Tuple[str, str]]:
     """Return a list with one entry: (filename, code)."""
     return [(filename, code)]
@@ -33,6 +44,7 @@ def from_file(filepath: str) -> List[Tuple[str, str]]:
 def from_folder(folderpath: str, extensions: Optional[Set[str]] = None) -> List[Tuple[str, str]]:
     """
     Walk a folder, collect all files with extensions in the set.
+    Vendored/hidden directories and oversized files are skipped.
     Returns list of (relative_path, content).
     """
     if extensions is None:
@@ -40,15 +52,28 @@ def from_folder(folderpath: str, extensions: Optional[Set[str]] = None) -> List[
     root = Path(folderpath)
     if not root.exists():
         raise FileNotFoundError(f"Folder not found: {folderpath}")
-    
+
     files = []
-    for filepath in root.rglob('*'):
-        if filepath.is_file() and filepath.suffix in extensions:
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Prune ignored and hidden directories in place so they are not traversed.
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if d not in IGNORED_DIRS and not d.startswith('.')
+        )
+        for filename in sorted(filenames):
+            filepath = Path(dirpath) / filename
+            if filepath.suffix not in extensions:
+                continue
             try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                relative = filepath.relative_to(root)
-                files.append((str(relative), content))
+                size = filepath.stat().st_size
+                if size > MAX_FILE_BYTES:
+                    logger.warning(
+                        f"Skipping {filepath} ({size} bytes exceeds the "
+                        f"{MAX_FILE_BYTES} byte limit)."
+                    )
+                    continue
+                content = filepath.read_text(encoding='utf-8')
+                files.append((str(filepath.relative_to(root)), content))
             except Exception as e:
                 logger.warning(f"Skipping file {filepath} (read error): {e}")
     return files
@@ -71,6 +96,9 @@ def from_github(url: str, branch: Optional[str] = None) -> List[Tuple[str, str]]
         return files
     except Exception as e:
         raise RuntimeError(f"Failed to clone or read repository: {e}")
+    finally:
+        # File contents are already in memory, so the clone can always be removed.
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 def from_zip(zip_path: str) -> List[Tuple[str, str]]:
     """
@@ -84,6 +112,8 @@ def from_zip(zip_path: str) -> List[Tuple[str, str]]:
         return files
     except Exception as e:
         raise RuntimeError(f"Failed to extract or read zip: {e}")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 def combine_files(files: List[Tuple[str, str]], separator: str = "\n\n") -> str:
     """

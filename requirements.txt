@@ -2,8 +2,7 @@ requests
 python-dotenv
 click
 markdown
+pygments
 gitpython
-pytest
 flask
-flask-wtf
 pytest

@@ -9,6 +9,7 @@ import click
 from pathlib import Path
 from typing import Optional
 
+from src.config import DEFAULT_MAX_TOKENS, DEFAULT_MODEL, DEFAULT_TIMEOUT
 from src.ingest import (
     from_file, from_folder, from_github, from_paste,
     combine_files, detect_language_from_extension, CODE_EXTENSIONS
@@ -34,6 +35,18 @@ class ProgressSpinner:
         self.start_time = None
         self.thread = None
         self.width = 40
+        # Legacy Windows consoles (e.g. cp1252) cannot encode block glyphs, which
+        # made the animation thread die with UnicodeEncodeError. Fall back to ASCII.
+        self.bar_chars = ('█', '░') if self._stdout_supports_unicode() else ('#', '-')
+
+    @staticmethod
+    def _stdout_supports_unicode() -> bool:
+        encoding = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+        try:
+            '█░'.encode(encoding)
+        except (UnicodeEncodeError, LookupError):
+            return False
+        return True
 
     def start(self):
         self.running = True
@@ -46,18 +59,29 @@ class ProgressSpinner:
         self.running = False
         if self.thread:
             self.thread.join(timeout=0.5)
-        sys.stdout.write('\r' + ' ' * (len(self.message) + 50) + '\r')
-        sys.stdout.flush()
+        try:
+            sys.stdout.write('\r' + ' ' * (len(self.message) + 50) + '\r')
+            sys.stdout.flush()
+        except (OSError, UnicodeEncodeError, ValueError):
+            # Nothing sensible to do if the stream is gone; never raise from cleanup.
+            pass
 
     def _animate(self):
+        filled, empty = self.bar_chars
         while self.running:
             elapsed = time.time() - self.start_time
             progress = min(1.0, elapsed / self.target_duration)
             percent = int(progress * 100)
             bar_length = int(progress * self.width)
-            bar = '█' * bar_length + '░' * (self.width - bar_length)
-            sys.stdout.write(f'\r{self.message} [{bar}] {percent}%')
-            sys.stdout.flush()
+            bar = filled * bar_length + empty * (self.width - bar_length)
+            try:
+                sys.stdout.write(f'\r{self.message} [{bar}] {percent}%')
+                sys.stdout.flush()
+            except (OSError, UnicodeEncodeError, ValueError):
+                # A closed or non-encodable stdout must not kill the loop with a
+                # traceback that would be painted over the real output.
+                self.running = False
+                return
             time.sleep(0.1)
 
 
@@ -65,18 +89,41 @@ class ProgressSpinner:
 # MARKDOWN → JSON HELPER
 # ==============================
 def markdown_to_json(md_text: str) -> dict:
-    """Convert markdown to a structured dict with sections (by headings)."""
+    """Convert markdown to a structured dict with sections (by headings).
+
+    Headings inside fenced code blocks are skipped: shell comments such as
+    ``# Install the tool`` would otherwise be exported as doc sections.
+    """
     lines = md_text.splitlines()
     result = {}
     current_section = None
     current_content = []
+    in_fence = False
+    fence_char = None
 
     def save_section():
-        if current_section:
-            result[current_section] = '\n'.join(current_content).strip()
+        if not current_section:
+            return
+        content = '\n'.join(current_content).strip()
+        if current_section not in result:
+            result[current_section] = content
+        elif content:
+            # Repeated headings are merged rather than silently overwriting.
+            existing = result[current_section]
+            result[current_section] = f"{existing}\n\n{content}".strip() if existing else content
 
     for line in lines:
-        heading_match = re.match(r'^(#{2,6})\s+(.*)', line)
+        fence_match = re.match(r'^(`{3,}|~{3,})', line.lstrip())
+        if fence_match:
+            marker = fence_match.group(1)
+            if not in_fence:
+                in_fence, fence_char = True, marker[0]
+            elif marker[0] == fence_char:
+                in_fence, fence_char = False, None
+            current_content.append(line)
+            continue
+
+        heading_match = None if in_fence else re.match(r'^(#{1,6})\s+(.*)', line)
         if heading_match:
             save_section()
             title = heading_match.group(2).strip()
@@ -94,7 +141,7 @@ def markdown_to_json(md_text: str) -> dict:
 # ==============================
 @click.group()
 def cli():
-    """Automated Documentation Generator – CLI tool."""
+    """Automatic Source Code Document Generator – CLI tool."""
     pass
 
 
@@ -114,25 +161,34 @@ def cli():
 @click.option('--format', '-f', default='md',
               type=click.Choice(['md', 'html', 'json', 'both', 'all']),
               help='Output format(s): md, html, json, both (md+html), all (md+html+json).')
-@click.option('--max-tokens', default=300000, help='Max tokens for AI response (V4 max is 384000).')
+@click.option('--max-tokens', default=DEFAULT_MAX_TOKENS, show_default=True, type=int,
+              help='Max tokens for the AI response.')
+@click.option('--model', default=DEFAULT_MODEL, show_default=True,
+              help='DeepSeek model to use (e.g. deepseek-v4-flash, deepseek-v4-pro).')
+@click.option('--timeout', default=DEFAULT_TIMEOUT, show_default=True, type=int,
+              help='Per-request timeout in seconds.')
 @click.option('--progress-duration', default=30, help='Target seconds for the progress bar to reach 100%.')
 def generate(input_file, input_folder, github_url, paste_code,
              title, author, version, context, language,
-             output, format, max_tokens, progress_duration):
+             output, format, max_tokens, model, timeout, progress_duration):
     """Generate documentation from code."""
 
     # 1. Determine input source and get files
     files = []
-    if input_file:
-        files = from_file(input_file)
-    elif input_folder:
-        files = from_folder(input_folder)
-    elif github_url:
-        files = from_github(github_url)
-    elif paste_code:
-        files = from_paste(paste_code)
-    else:
-        click.echo("Error: Please provide one of --file, --folder, --github, or --paste.", err=True)
+    try:
+        if input_file:
+            files = from_file(input_file)
+        elif input_folder:
+            files = from_folder(input_folder)
+        elif github_url:
+            files = from_github(github_url)
+        elif paste_code:
+            files = from_paste(paste_code)
+        else:
+            click.echo("Error: Please provide one of --file, --folder, --github, or --paste.", err=True)
+            sys.exit(1)
+    except (FileNotFoundError, RuntimeError) as e:
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
     if not files:
@@ -164,8 +220,17 @@ def generate(input_file, input_folder, github_url, paste_code,
     # 5. Generate documentation (with percentage progress bar)
     spinner = ProgressSpinner("Generating documentation", target_duration=progress_duration)
     spinner.start()
-    doc = generate_docs(prompt, combined_code)
-    spinner.stop()
+    try:
+        doc = generate_docs(
+            prompt,
+            combined_code,
+            model=model,
+            timeout=timeout,
+            max_tokens=max_tokens,
+        )
+    finally:
+        # Always stop the animation, otherwise it keeps painting over tracebacks.
+        spinner.stop()
 
     if doc is None:
         click.echo("Failed to generate documentation. Check logs for details.", err=True)

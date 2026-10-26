@@ -1,5 +1,6 @@
 # web/app.py
 import os
+import time
 import tempfile
 import shutil
 import json
@@ -13,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.ingest import (
     from_paste, from_file, from_folder, from_github,
-    combine_files, detect_language_from_extension
+    combine_files, detect_language_from_extension, CODE_EXTENSIONS
 )
 from src.prompt import build_prompt
 from src.ai_client import generate_docs
@@ -26,10 +27,29 @@ app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-change-in-pr
 DOCS_DIR = os.path.join(tempfile.gettempdir(), 'adoc_generated')
 os.makedirs(DOCS_DIR, exist_ok=True)
 
-ALLOWED_EXTENSIONS = {'.py', '.js', '.ts', '.java', '.c', '.cpp', '.go', '.rs', '.rb', '.php', '.swift', '.kt', '.scala', '.cs', '.sh', '.pl', '.pm', '.lua', '.r', '.m', '.groovy', '.dart', '.jl', '.ex', '.exs'}
+# Generated documents are throwaway previews; purge them after a day.
+DOC_MAX_AGE_SECONDS = 24 * 60 * 60
+
+# Single source of truth: the same extensions the CLI accepts.
+ALLOWED_EXTENSIONS = CODE_EXTENSIONS
 
 def allowed_file(filename):
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
+
+def cleanup_old_docs(max_age_seconds=DOC_MAX_AGE_SECONDS):
+    """Best-effort removal of generated documents older than max_age_seconds."""
+    cutoff = time.time() - max_age_seconds
+    try:
+        entries = os.listdir(DOCS_DIR)
+    except OSError:
+        return
+    for name in entries:
+        path = os.path.join(DOCS_DIR, name)
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                os.unlink(path)
+        except OSError:
+            pass
 
 @app.route('/')
 def index():
@@ -110,6 +130,7 @@ def generate():
         return render_template('index.html', error="Documentation generation failed. Please check your API key and try again.")
 
     # Store in temporary file
+    cleanup_old_docs()
     doc_id = str(uuid.uuid4())
     doc_path = os.path.join(DOCS_DIR, f"{doc_id}.txt")
     with open(doc_path, 'w', encoding='utf-8') as f:

@@ -1,8 +1,8 @@
-# Automated Documentation Generator
+# Automatic Source Code Document Generator
 
 ## Overview
 
-The **Automated Documentation Generator** is a Python tool that produces comprehensive Markdown documentation from source code automatically. It combines code from a single file, a folder, a GitHub repository, or pasted text, sends it to the DeepSeek AI API with a tailored system prompt, and returns well-structured documentation that includes:
+The **Automatic Source Code Document Generator** is a Python tool that produces comprehensive Markdown documentation from source code automatically. It combines code from a single file, a folder, a GitHub repository, or pasted text, sends it to the DeepSeek AI API with a tailored system prompt, and returns well-structured documentation that includes:
 
 - Project title and overview
 - Installation instructions
@@ -45,10 +45,10 @@ The tool supports many common programming languages and attempts to auto-detect 
    If a `requirements.txt` file is not present, install the dependencies directly:
 
    ```bash
-   pip install click requests python-dotenv GitPython Markdown Flask pytest
+   pip install click requests python-dotenv GitPython Markdown Pygments Flask pytest
    ```
 
-   `Pygments` is also recommended for syntax highlighting in HTML output.
+   `Pygments` ships with the requirements; it powers syntax highlighting in HTML output.
 
 4. Create a `.env` file in the project root with your API key:
 
@@ -56,7 +56,8 @@ The tool supports many common programming languages and attempts to auto-detect 
    DEEPSEEK_API_KEY=your-api-key-here
    ```
 
-   The application will fail to start if this key is not set.
+   The key is read lazily: commands fail with a clear error when it is missing,
+   and the web UI can also accept a key per request.
 
 ---
 
@@ -120,7 +121,13 @@ python -m src.cli generate --file ./app.py --title "My App" --author "Jane Doe" 
 | `--output`, `-o` | Output file path | `./docs/README.md` |
 | `--format`, `-f` | Output format: `md`, `html`, `json`, `both`, `all` | `md` |
 | `--max-tokens` | Maximum tokens for AI response | `300000` |
+| `--model` | DeepSeek model to use | `deepseek-v4-flash` |
+| `--timeout` | Per-request timeout in seconds | `180` |
 | `--progress-duration` | Target seconds for the progress bar to reach 100% | `30` |
+
+Defaults can also be set through environment variables (a `.env` file is loaded
+automatically): `DEEPSEEK_MODEL`, `DEEPSEEK_TIMEOUT`, `DEEPSEEK_MAX_TOKENS`, and
+`DEEPSEEK_MAX_INPUT_TOKENS` (input budget used for the truncation warning).
 
 ### Web Interface
 

@@ -1,4 +1,6 @@
 # src/markdown_utils.py
+import html as html_lib
+
 import markdown
 from markdown.extensions.toc import TocExtension
 from markdown.extensions.codehilite import CodeHiliteExtension
@@ -96,15 +98,18 @@ def render_markdown_to_html(md_text: str, title: str = "Documentation") -> str:
     </style>
     """
 
+    # Titles can come from user input (--title / web form), so escape them.
+    safe_title = html_lib.escape(title)
+
     html_template = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>{title}</title>
+    <title>{safe_title}</title>
     {css}
 </head>
 <body>
-    <h1>{title}</h1>
+    <h1>{safe_title}</h1>
     <div class="toc">
         <strong>Table of Contents</strong>
         {toc}
