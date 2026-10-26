@@ -1,602 +1,458 @@
 # Automatic Source Code Document Generator
 
+
+A Python-based tool that generates comprehensive Markdown documentation from source code using the DeepSeek API. It supports multiple input sources (single file, folder, GitHub repository, or pasted code) and can output documentation in Markdown, HTML, or JSON formats. The project provides both a command-line interface (CLI) and a web interface.
+
 ## Overview
 
-The **Automatic Source Code Document Generator** is a Python tool that produces comprehensive Markdown documentation from source code automatically. It combines code from a single file, a folder, a GitHub repository, or pasted text, sends it to the DeepSeek AI API with a tailored system prompt, and returns well-structured documentation that includes:
+The tool reads source code files, combines them into a single prompt, and sends the prompt to the DeepSeek API to generate structured documentation. It handles file ingestion, language detection, prompt construction, API communication with retry logic, and output formatting. The generated documentation follows a standard template with sections like Project Title, Installation, Usage, API Reference, Contributing, and License.
 
-- Project title and overview
-- Installation instructions
-- Usage examples
-- Per-function/per-class API reference
-- Contributing guidelines
-- License information (when available)
-
-Output can be saved as **Markdown**, **HTML**, **JSON**, or any combination of these formats. The project also includes a simple web interface for generating and previewing documentation in a browser.
-
-The tool supports many common programming languages and attempts to auto-detect the primary language from the file extension.
-
----
+Key features:
+- **Multiple input sources**: single file, folder, GitHub repo, or pasted code.
+- **Automatic language detection** from file extensions.
+- **Retry logic** for API rate limits and server errors.
+- **Progress bar** for CLI feedback.
+- **Output formats**: Markdown, styled HTML (with syntax highlighting and TOC), and JSON (structured by headings).
+- **Web interface** with file upload, GitHub cloning, and preview/download options.
+- **Configuration** via environment variables or `.env` file.
 
 ## Installation
 
 ### Prerequisites
+- Python 3.7 or higher
+- pip
 
-- Python 3.8+
-- A DeepSeek API key
+### Dependencies
+The project relies on the following Python packages (inferred from imports):
 
-### Steps
+| Package | Purpose |
+|---------|---------|
+| `click` | CLI framework |
+| `requests` | HTTP client for DeepSeek API |
+| `python-dotenv` | Load environment variables from `.env` |
+| `GitPython` | Clone GitHub repositories |
+| `markdown` | Convert Markdown to HTML |
+| `Pygments` | Syntax highlighting for code blocks |
+| `Flask` | Web framework |
+| `Werkzeug` | Flask utilities (secure filenames, file serving) |
 
-1. Clone or download the project.
+Install all dependencies with:
 
-2. Create and activate a virtual environment (recommended):
+```bash
+pip install click requests python-dotenv GitPython markdown Pygments Flask Werkzeug
+```
 
+Alternatively, if a `requirements.txt` exists (not included in the provided code), run:
+
+```bash
+pip install -r requirements.txt
+```
+
+### API Key Configuration
+The tool requires a DeepSeek API key. You can set it in one of three ways:
+
+1. **Environment variable**:
    ```bash
-   python -m venv venv
-   source venv/bin/activate    # Linux/macOS
-   venv\Scripts\activate       # Windows
+   export DEEPSEEK_API_KEY="your-api-key"
    ```
 
-3. Install the required packages:
-
-   ```bash
-   pip install -r requirements.txt
+2. **`.env` file** in the project root:
+   ```
+   DEEPSEEK_API_KEY=your-api-key
    ```
 
-   If a `requirements.txt` file is not present, install the dependencies directly:
+3. **Per-request** in the web interface (the CLI does not currently expose an API key option; it uses the environment variable or `.env`).
 
-   ```bash
-   pip install click requests python-dotenv GitPython Markdown Pygments Flask pytest
-   ```
+Optional environment variables (with defaults):
 
-   `Pygments` ships with the requirements; it powers syntax highlighting in HTML output.
-
-4. Create a `.env` file in the project root with your API key:
-
-   ```
-   DEEPSEEK_API_KEY=your-api-key-here
-   ```
-
-   The key is read lazily: commands fail with a clear error when it is missing,
-   and the web UI can also accept a key per request.
-
----
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | Model to use |
+| `DEEPSEEK_TIMEOUT` | `180` | Request timeout in seconds |
+| `DEEPSEEK_MAX_TOKENS` | `300000` | Maximum tokens for the AI response |
+| `DEEPSEEK_MAX_INPUT_TOKENS` | `120000` | Input token budget warning threshold |
+| `FLASK_SECRET_KEY` | `dev-secret-key-change-in-production` | Flask session secret (web only) |
 
 ## Usage
 
-### Command‑Line Interface (CLI)
+### Command-Line Interface (CLI)
 
-The main entry point is the `cli` command group defined in `src/cli.py`. You can run it via Python:
+The CLI is implemented with Click. Run it as a module from the project root:
 
 ```bash
-python -m src.cli [OPTIONS] COMMAND [ARGS]...
+python -m src.cli generate [OPTIONS]
 ```
 
-The only command is `generate`.
+**Note:** Running `python src/cli.py` directly will fail because of package-relative imports. Use `python -m src.cli` or install the package.
+
+#### Options
+
+| Option | Description |
+|--------|-------------|
+| `--file PATH` | Single file to document. |
+| `--folder PATH` | Folder containing code files. |
+| `--github URL` | GitHub repository URL. |
+| `--paste TEXT` | Paste code directly as a string. |
+| `--title TEXT` | Project title (used as main heading). |
+| `--author TEXT` | Author name. |
+| `--version TEXT` | Version number. |
+| `--context TEXT` | Additional context about the project. |
+| `--language TEXT` | Programming language (auto-detect if not given). |
+| `--output, -o PATH` | Output file path (default: `./docs/README.md`). |
+| `--format, -f [md\|html\|json\|both\|all]` | Output format(s). `both` = md+html, `all` = md+html+json. Default: `md`. |
+| `--max-tokens INTEGER` | Max tokens for the AI response (default: from env). |
+| `--model TEXT` | DeepSeek model to use (default: from env). |
+| `--timeout INTEGER` | Per-request timeout in seconds (default: from env). |
+| `--progress-duration INTEGER` | Target seconds for the progress bar to reach 100% (default: 30). |
 
 #### Examples
 
-Document a single file:
-
+Generate Markdown from a single file:
 ```bash
-python -m src.cli generate --file ./main.py --output docs/README.md
+python -m src.cli generate --file path/to/code.py --title "My Project" --output docs/README.md
 ```
 
-Document an entire folder:
-
+Generate all formats from a folder:
 ```bash
-python -m src.cli generate --folder ./my_project --format all
+python -m src.cli generate --folder ./src --title "My Library" --format all --output docs/README
 ```
 
-Document a GitHub repository (cloned to a temporary directory):
-
+Generate from a GitHub repository:
 ```bash
-python -m src.cli generate --github https://github.com/owner/repo.git --title "My Repo"
+python -m src.cli generate --github https://github.com/user/repo --title "Repo Docs" --format both
 ```
 
 Generate from pasted code:
-
 ```bash
-python -m src.cli generate --paste "def hello():\n    print('hi')"
+python -m src.cli generate --paste "def hello():\n    return 'world'" --title "Snippet"
 ```
-
-Specify project metadata and output formats:
-
-```bash
-python -m src.cli generate --file ./app.py --title "My App" --author "Jane Doe" --version "1.0" --format both --output docs/README.md
-```
-
-#### Available options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--file` | Path to a single file to document | – |
-| `--folder` | Path to a folder containing code files | – |
-| `--github` | GitHub repository URL to clone and document | – |
-| `--paste` | Inline code string to document | – |
-| `--title` | Project title | `""` |
-| `--author` | Author name | `""` |
-| `--version` | Version number | `""` |
-| `--context` | Additional context for the AI | `""` |
-| `--language` | Programming language (auto-detected when omitted) | `""` |
-| `--output`, `-o` | Output file path | `./docs/README.md` |
-| `--format`, `-f` | Output format: `md`, `html`, `json`, `both`, `all` | `md` |
-| `--max-tokens` | Maximum tokens for AI response | `300000` |
-| `--model` | DeepSeek model to use | `deepseek-v4-flash` |
-| `--timeout` | Per-request timeout in seconds | `180` |
-| `--progress-duration` | Target seconds for the progress bar to reach 100% | `30` |
-
-Defaults can also be set through environment variables (a `.env` file is loaded
-automatically): `DEEPSEEK_MODEL`, `DEEPSEEK_TIMEOUT`, `DEEPSEEK_MAX_TOKENS`, and
-`DEEPSEEK_MAX_INPUT_TOKENS` (input budget used for the truncation warning).
 
 ### Web Interface
 
-The project includes a Flask web application in `web/app.py`.
-
-Run it with:
+Start the Flask development server:
 
 ```bash
 python web/app.py
 ```
 
-Then open [http://localhost:5000](http://localhost:5000) in your browser. The web app allows you to:
+The application will be available at `http://localhost:5000`.
 
-- Paste code directly
-- Upload multiple files
-- Provide a GitHub repository URL
-- Set title, author, version, context, language, and output format
-- Preview the generated documentation in your browser
-- Download the result as Markdown, HTML, or JSON
+**Workflow:**
+1. Choose an input type: **Paste Code**, **Upload Files**, or **GitHub Repository**.
+2. Fill in optional metadata (title, author, version, context, language).
+3. Optionally provide an API key (overrides the environment variable).
+4. Select the desired output format (Markdown, HTML, JSON).
+5. Click **Generate**.
+6. Preview the generated documentation and download it in your chosen format.
 
----
+**Routes:**
+- `GET /` – Home page with input form.
+- `POST /generate` – Processes the form, generates documentation, stores it temporarily, and redirects to the result page.
+- `GET /result` – Displays the generated documentation as HTML.
+- `GET /download/<format>` – Downloads the documentation as `md`, `html`, or `json`.
+
+Generated files are stored in a temporary directory (`/tmp/adoc_generated` on Unix-like systems) and automatically cleaned up after 24 hours.
 
 ## API Reference
 
-### `src/ai_client.py`
+### Module: `src.config`
 
-This module encapsulates interactions with the DeepSeek Chat Completions API.
+Configuration constants and API key retrieval.
 
-#### Class `DeepSeekClient`
+#### Constants
+- `DEFAULT_MODEL: str` – Default model (`deepseek-v4-flash`), overridable via `DEEPSEEK_MODEL`.
+- `DEFAULT_TIMEOUT: int` – Default request timeout (`180` seconds), overridable via `DEEPSEEK_TIMEOUT`.
+- `DEFAULT_MAX_TOKENS: int` – Default max response tokens (`300000`), overridable via `DEEPSEEK_MAX_TOKENS`.
+- `MAX_INPUT_TOKENS: int` – Input token warning threshold (`120000`), overridable via `DEEPSEEK_MAX_INPUT_TOKENS`.
 
-##### `DeepSeekClient(api_key=DEEPSEEK_API_KEY, model="deepseek-v4-flash")`
+#### `class ConfigError(RuntimeError)`
+Raised when a required configuration setting (e.g., API key) is missing.
 
-Creates a client for the DeepSeek API.
+#### `get_api_key() -> str`
+Returns the DeepSeek API key from the `DEEPSEEK_API_KEY` environment variable.
 
-**Parameters**
+**Returns:** The API key string.
 
-- `api_key (str)` – DeepSeek API key. Defaults to the value from the environment (`DEEPSEEK_API_KEY`).
-- `model (str)` – Model identifier. Defaults to `"deepseek-v4-flash"`.
+**Raises:** `ConfigError` if the environment variable is not set.
 
-**Attributes**
-
-- `base_url (str)` – API endpoint URL.
-- `max_retries (int)` – Maximum number of retries for transient errors (default `3`).
-- `retry_delay (int)` – Base delay in seconds for exponential backoff (default `2`).
-
-##### `generate_documentation(system_prompt, user_code, max_tokens=300000) -> Optional[str]`
-
-Sends the system prompt and code to DeepSeek and returns the generated Markdown documentation.
-
-**Parameters**
-
-- `system_prompt (str)` – System instruction describing the documentation format and style.
-- `user_code (str)` – Combined code from all input files.
-- `max_tokens (int)` – Maximum tokens for the AI response (default `300000`).
-
-**Returns**
-
-- `Optional[str]` – The generated documentation as a string, or `None` if all retries fail.
-
-**Exceptions**
-
-- Makes up to `max_retries` attempts. On timeout, connection errors, rate limiting (HTTP 429), or server errors (500, 502, 503, 504), it retries with exponential backoff.
-- Other non‑200 status codes (e.g. 401, 400) cause an immediate return of `None`.
-
-**Example**
-
+**Example:**
 ```python
-from src.ai_client import DeepSeekClient
-
-client = DeepSeekClient(api_key="your-key")
-doc = client.generate_documentation(
-    "You are a documentation expert.",
-    "# File: main.py\ndef main(): pass"
-)
-print(doc)
-```
-
-##### `generate_with_truncation_warning(system_prompt, user_code, max_tokens=300000) -> Optional[str]`
-
-Call `generate_documentation()` after warning when the estimated code length may exceed `max_tokens`.
-
-**Parameters**
-
-- `system_prompt (str)` – Same as `generate_documentation`.
-- `user_code (str)` – Same as `generate_documentation`.
-- `max_tokens (int)` – Same as `generate_documentation`.
-
-**Returns**
-
-- `Optional[str]` – The generated documentation, or `None` on failure.
-
-**Example**
-
-```python
-client = DeepSeekClient()
-doc = client.generate_with_truncation_warning("system prompt", "print('hello')")
+from src.config import get_api_key
+key = get_api_key()  # or raises ConfigError
 ```
 
 ---
 
-#### Module-level helpers
+### Module: `src.ai_client`
 
-##### `get_client() -> DeepSeekClient`
+Handles communication with the DeepSeek API.
 
-Returns a lazily‑initialized module‑wide singleton client.
+#### `class DeepSeekClient`
+A client for the DeepSeek chat completions API.
 
-##### `generate_docs(system_prompt, user_code) -> Optional[str]`
+##### `__init__(api_key: Optional[str] = None, model: str = DEFAULT_MODEL, timeout: int = DEFAULT_TIMEOUT, max_retries: int = 3, retry_delay: int = 2)`
+Initializes the client.
 
-Convenience function that uses the singleton client to generate documentation.
+- `api_key` – API key. If `None`, attempts to load from environment.
+- `model` – Model name.
+- `timeout` – Request timeout in seconds.
+- `max_retries` – Number of retry attempts for transient failures.
+- `retry_delay` – Base delay (seconds) for exponential backoff.
 
-**Parameters**
+**Raises:** `ConfigError` if no API key is provided and none is found in the environment.
 
-- `system_prompt (str)` – System instruction.
-- `user_code (str)` – Combined code.
+##### `generate_documentation(system_prompt: str, user_code: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> Optional[str]`
+Sends a request to the DeepSeek API to generate documentation.
 
-**Returns**
+- `system_prompt` – The system prompt instructing the model.
+- `user_code` – The combined source code to document.
+- `max_tokens` – Maximum tokens for the response.
 
-- `Optional[str]` – Generated Markdown, or `None` on failure.
+**Returns:** The generated documentation as a string, or `None` if the request fails after all retries.
 
----
+**Behavior:**
+- Retries on HTTP 429 (rate limit) and 5xx server errors with exponential backoff.
+- Retries on timeout and connection errors.
+- Returns `None` for other HTTP errors.
 
-### `src/config.py`
-
-Loads environment variables and provides the DeepSeek API key.
-
-- Loads the `.env` file using `python-dotenv`.
-- Exposes `DEEPSEEK_API_KEY` from the environment.
-- Raises `ValueError` if `DEEPSEEK_API_KEY` is not set.
-
-**Example**
-
+**Example:**
 ```python
-from src.config import DEEPSEEK_API_KEY
-print(DEEPSEEK_API_KEY is not None)  # True
+client = DeepSeekClient(api_key="sk-...")
+doc = client.generate_documentation("You are a documenter...", "def foo(): pass")
+if doc:
+    print(doc)
+```
+
+##### `generate_with_truncation_warning(system_prompt: str, user_code: str, max_tokens: int = DEFAULT_MAX_TOKENS, max_input_tokens: int = MAX_INPUT_TOKENS) -> Optional[str]`
+Wraps `generate_documentation` and logs a warning if the estimated input size exceeds `max_input_tokens`.
+
+- `max_input_tokens` – Threshold for warning (default from config).
+
+**Returns:** Same as `generate_documentation`.
+
+#### `get_client(api_key: Optional[str] = None, model: Optional[str] = None, timeout: Optional[int] = None) -> DeepSeekClient`
+Returns a `DeepSeekClient`. If no overrides are provided, returns a cached singleton; otherwise creates a new client.
+
+#### `generate_docs(system_prompt: str, user_code: str, api_key: Optional[str] = None, model: Optional[str] = None, timeout: Optional[int] = None, max_tokens: Optional[int] = None) -> Optional[str]`
+Convenience function that obtains a client and calls `generate_with_truncation_warning`.
+
+**Example:**
+```python
+from src.ai_client import generate_docs
+doc = generate_docs("system prompt", "code", api_key="sk-...", max_tokens=10000)
 ```
 
 ---
 
-### `src/ingest.py`
+### Module: `src.ingest`
 
-Contains functions for reading code from various input sources and combining them.
+Utilities for reading code from various sources and combining them.
 
-#### Module constants
+#### Constants
+- `CODE_EXTENSIONS: Set[str]` – Supported file extensions (e.g., `.py`, `.js`, `.java`, …).
+- `IGNORED_DIRS: Set[str]` – Directories to skip during folder traversal (e.g., `.git`, `node_modules`, `venv`).
+- `MAX_FILE_BYTES: int` – Maximum file size (1,000,000 bytes) before skipping.
 
-- `CODE_EXTENSIONS (Set[str])` – Set of recognised code file extensions.
+#### `from_paste(code: str, filename: str = "paste_code") -> List[Tuple[str, str]]`
+Returns a list with one tuple `(filename, code)`.
 
-#### `from_paste(code, filename="paste_code") -> List[Tuple[str, str]]`
+#### `from_file(filepath: str) -> List[Tuple[str, str]]`
+Reads a single file and returns `[(filename, content)]`.
 
-Returns a list containing a single `(filename, code)` tuple.
+**Raises:** `FileNotFoundError` if the file does not exist.
 
-**Parameters**
+#### `from_folder(folderpath: str, extensions: Optional[Set[str]] = None) -> List[Tuple[str, str]]`
+Recursively walks a folder, collecting files with allowed extensions. Skips ignored directories, hidden directories, and files larger than `MAX_FILE_BYTES`.
 
-- `code (str)` – The pasted code content.
-- `filename (str)` – Filename to label the pasted code (default `"paste_code"`).
+**Returns:** List of `(relative_path, content)` tuples.
 
-**Returns**
+**Raises:** `FileNotFoundError` if the folder does not exist.
 
-- `List[Tuple[str, str]]` – A list with one `(filename, content)` pair.
+#### `from_github(url: str, branch: Optional[str] = None) -> List[Tuple[str, str]]`
+Clones a GitHub repository into a temporary directory, processes its code files via `from_folder`, and cleans up.
 
-#### `from_file(filepath) -> List[Tuple[str, str]]`
+**Returns:** List of `(relative_path, content)` tuples.
 
-Reads a single file and returns `(filename, content)`.
+**Raises:** `RuntimeError` if cloning or reading fails.
 
-**Parameters**
+#### `from_zip(zip_path: str) -> List[Tuple[str, str]]`
+Extracts a ZIP archive to a temporary directory, processes code files, and cleans up.
 
-- `filepath (str)` – Path to the file.
+**Returns:** List of `(relative_path, content)` tuples.
 
-**Returns**
+**Raises:** `RuntimeError` if extraction or reading fails.
 
-- `List[Tuple[str, str]]` – A list with one entry.
+#### `combine_files(files: List[Tuple[str, str]], separator: str = "\n\n") -> str`
+Combines multiple file contents into a single string, prefixing each with `# File: <path>`.
 
-**Exceptions**
-
-- `FileNotFoundError` – If the file does not exist.
-
-#### `from_folder(folderpath, extensions=None) -> List[Tuple[str, str]]`
-
-Recursively collects all files with recognised code extensions from a folder.
-
-**Parameters**
-
-- `folderpath (str)` – Root folder path.
-- `extensions (Optional[Set[str]])` – Set of extensions to include. Defaults to `CODE_EXTENSIONS`.
-
-**Returns**
-
-- `List[Tuple[str, str]]` – List of `(relative_path, content)` tuples. Files that cannot be read are skipped with a warning.
-
-**Exceptions**
-
-- `FileNotFoundError` – If the folder does not exist.
-
-#### `from_github(url, branch=None) -> List[Tuple[str, str]]`
-
-Clones a GitHub repository to a temporary directory and processes its code files.
-
-**Parameters**
-
-- `url (str)` – Git clone URL.
-- `branch (Optional[str])` – Branch to clone. If omitted, the repository’s default branch is used.
-
-**Returns**
-
-- `List[Tuple[str, str]]` – List of `(relative_path, content)` tuples from the repository.
-
-**Exceptions**
-
-- `RuntimeError` – Raised if cloning or reading fails.
-
-#### `from_zip(zip_path) -> List[Tuple[str, str]]`
-
-Extracts a ZIP archive to a temporary directory and processes its code files.
-
-**Parameters**
-
-- `zip_path (str)` – Path to the ZIP file.
-
-**Returns**
-
-- `List[Tuple[str, str]]` – List of `(relative_path, content)` tuples.
-
-**Exceptions**
-
-- `RuntimeError` – Raised if extraction or reading fails.
-
-#### `combine_files(files, separator="\n\n") -> str`
-
-Combines multiple file contents into a single string, prefixing each file with a `# File: <name>` header.
-
-**Parameters**
-
-- `files (List[Tuple[str, str]])` – List of `(filename, content)` tuples.
-- `separator (str)` – String inserted between files (default `"\n\n"`).
-
-**Returns**
-
-- `str` – The combined code.
-
-**Example**
-
+**Example:**
 ```python
-files = [("a.py", "x = 1"), ("b.py", "y = 2")]
-combined = combine_files(files)
-print(combined)
-# # File: a.py
-# x = 1
-#
-# # File: b.py
-# y = 2
+combined = combine_files([("a.py", "x = 1"), ("b.py", "y = 2")])
+# "# File: a.py\nx = 1\n\n# File: b.py\ny = 2"
 ```
 
-#### `detect_language_from_extension(filename) -> str`
-
-Returns a human-readable language name based on file extension.
-
-**Parameters**
-
-- `filename (str)` – File name or path.
-
-**Returns**
-
-- `str` – Language name (e.g. `"Python"`, `"JavaScript"`) or `"Unknown"` if the extension is not recognised.
+#### `detect_language_from_extension(filename: str) -> str`
+Returns a human-readable language name based on the file extension (e.g., `'.py'` → `'Python'`). Returns `'Unknown'` if not recognized.
 
 ---
 
-### `src/prompt.py`
+### Module: `src.prompt`
 
-Contains the system prompt template and the function used to build it.
+Builds the system prompt for the AI.
 
-#### Module constant
+#### `SYSTEM_PROMPT_TEMPLATE: str`
+A template string with placeholders for language, project name, author, version, and context. It instructs the model to produce structured Markdown documentation.
 
-- `SYSTEM_PROMPT_TEMPLATE (str)` – The full documentation instruction template with placeholders for language, project name, author, version, and context.
+#### `build_prompt(language: str = "Python", project_name: str = "", author: str = "", version: str = "", context: str = "") -> str`
+Fills the template with provided values. Empty strings are replaced with sensible defaults (e.g., `"Unknown Project"`, `"No additional context provided."`).
 
-#### `build_prompt(language="Python", project_name="", author="", version="", context="") -> str`
-
-Fills the system prompt template with the given values.
-
-**Parameters**
-
-- `language (str)` – Target programming language (default `"Python"`).
-- `project_name (str)` – Project title. Falls back to `"Unknown Project"` when empty.
-- `author (str)` – Author name. Falls back to `"Not specified"` when empty.
-- `version (str)` – Version number. Falls back to `"Not specified"` when empty.
-- `context (str)` – Additional context. Falls back to `"No additional context provided."` when empty.
-
-**Returns**
-
-- `str` – The complete system prompt ready to be sent to the API.
-
-**Example**
-
+**Example:**
 ```python
 from src.prompt import build_prompt
-
-prompt = build_prompt(
-    language="Python",
-    project_name="My CLI Tool",
-    author="Jane Doe",
-    version="2.1.0",
-    context="This tool automates documentation generation."
-)
+prompt = build_prompt(language="Python", project_name="My App", author="Jane")
 ```
 
 ---
 
-### `src/markdown_utils.py`
+### Module: `src.markdown_utils`
 
-Helpers for converting Markdown to styled HTML.
+Converts Markdown to styled HTML.
 
-#### `render_markdown_to_html(md_text, title="Documentation") -> str`
+#### `render_markdown_to_html(md_text: str, title: str = "Documentation") -> str`
+Returns a complete HTML document with embedded CSS, a table of contents, and syntax-highlighted code blocks (using Pygments). The title is HTML-escaped for safety.
 
-Converts Markdown into a complete HTML document with embedded CSS and a table of contents.
-
-**Parameters**
-
-- `md_text (str)` – Markdown content.
-- `title (str)` – Page title and `<h1>` heading (default `"Documentation"`).
-
-**Returns**
-
-- `str` – A full HTML page string.
-
-**Example**
-
+**Example:**
 ```python
 from src.markdown_utils import render_markdown_to_html
-
-html = render_markdown_to_html("# Hello\n\nSome docs.", title="My Docs")
+html = render_markdown_to_html("# Hello\n\nWorld", "My Docs")
 ```
 
-#### `markdown_to_body_html(md_text) -> str`
-
-Converts Markdown to an HTML fragment (without `<html>`, `<head>`, or `<body>` tags). Useful for embedding in a preview page.
-
-**Parameters**
-
-- `md_text (str)` – Markdown content.
-
-**Returns**
-
-- `str` – HTML body markup.
+#### `markdown_to_body_html(md_text: str) -> str`
+Converts Markdown to HTML body content only (no `<html>`, `<head>`, or `<body>` tags). Useful for embedding in a preview page.
 
 ---
 
-### `src/cli.py`
+### Module: `src.cli`
 
-Implements the command-line interface.
+Command-line interface built with Click.
 
-#### Class `ProgressSpinner`
+#### `class ProgressSpinner`
+An animated progress bar with percentage display. It automatically falls back to ASCII characters (`#`, `-`) if the terminal cannot encode Unicode block characters.
 
-An animated progress bar that displays a percentage while documentation is generated.
+- `__init__(message="Generating documentation", target_duration=30)`
+- `start()` – Starts the animation in a daemon thread.
+- `stop()` – Stops the animation and clears the line.
 
-##### `ProgressSpinner(message="Generating documentation", target_duration=30)`
+#### `markdown_to_json(md_text: str) -> dict`
+Parses Markdown into a dictionary mapping heading titles to their content. Headings inside fenced code blocks are ignored. Duplicate headings are merged.
 
-- `message (str)` – Text shown beside the progress bar.
-- `target_duration (int)` – Number of seconds for the bar to reach 100%.
-
-##### `start()`
-
-Starts the animation in a background thread.
-
-##### `stop()`
-
-Stops the animation and clears the progress line.
-
-##### `_animate()`
-
-Internal worker that updates the bar and percentage.
-
-#### `markdown_to_json(md_text) -> dict`
-
-Parses Markdown into a dict whose keys are section titles (from `##`–`######` headers) and whose values are the section content.
-
-**Parameters**
-
-- `md_text (str)` – Raw Markdown text.
-
-**Returns**
-
-- `dict` – Section-by-section representation of the document.
-
-**Example**
-
+**Example:**
 ```python
 from src.cli import markdown_to_json
-
-data = markdown_to_json("## Installation\n\npip install foo")
-print(data)  # {"Installation": "pip install foo"}
+data = markdown_to_json("# Title\n\n## Section\n\nContent")
+# {'Title': '', 'Section': 'Content'}
 ```
 
 #### `cli()`
+Click group entry point. Displays help when called with `--help`.
 
-Click group that acts as the root command. Prints help when invoked without arguments.
+#### `generate(...)`
+Click command that performs the documentation generation workflow:
+1. Reads input from the selected source.
+2. Combines files.
+3. Detects language if not provided.
+4. Builds the prompt.
+5. Calls `generate_docs`.
+6. Saves output in the requested format(s).
 
-#### `generate(input_file, input_folder, github_url, paste_code, title, author, version, context, language, output, format, max_tokens, progress_duration)`
+**Exit codes:** `0` on success, `1` on error (e.g., no input, API failure).
 
-The main CLI command. It collects files from the selected input, builds the prompt, calls the AI, and writes the output in the requested format(s).
-
-**Parameters** – all passed via Click options described in the Usage section.
-
-**Behaviors**
-
-- Automatically detects language when `language` is not provided.
-- Supports formats: `md`, `html`, `json`, `both`, `all`.
-- Displays a progress bar while generating.
-- Exits with status 1 if no input files are found or generation fails.
-
----
-
-### `web/app.py`
-
-Flask web application for generating and previewing documentation.
-
-#### `allowed_file(filename) -> bool`
-
-Returns `True` if the file extension is in the supported set.
-
-#### Route `/` (`GET`)
-
-Renders the upload/paste form (`index.html`).
-
-#### Route `/generate` (`POST`)
-
-Handles documentation generation. Accepts form fields:
-
-- `title`, `author`, `version`, `context`, `language`, `format`
-- `input_type`: `paste`, `file`, or `github`
-- For paste: `code`
-- For file upload: `files` (multiple)
-- For github: `github_url`, `branch`
-
-On success, stores the generated document in a temporary directory, saves the doc ID in the Flask session, and redirects to `/result`.
-
-#### Route `/result` (`GET`)
-
-Reads the saved documentation from the session, converts it to an HTML preview, and renders `result.html`.
-
-#### Route `/download/<format>` (`GET`)
-
-Downloads the generated documentation in `md`, `html`, or `json` format.
-
-- Uses the temporary file created during generation.
-- Sends the file as an attachment with a sanitised filename.
-
-#### Starting the server
-
-```bash
-python web/app.py
+**Main entry point:**
+```python
+if __name__ == '__main__':
+    cli()
 ```
 
-The default host is `127.0.0.1` and port `5000`.
+---
+
+### Module: `web.app`
+
+Flask web application.
+
+#### Global objects
+- `app: Flask` – The Flask application instance.
+- `DOCS_DIR: str` – Temporary directory for generated documents.
+- `ALLOWED_EXTENSIONS: Set[str]` – Same as `CODE_EXTENSIONS` from `src.ingest`.
+
+#### `allowed_file(filename: str) -> bool`
+Returns `True` if the file extension is in `ALLOWED_EXTENSIONS`.
+
+#### `cleanup_old_docs(max_age_seconds: int = DOC_MAX_AGE_SECONDS)`
+Best-effort removal of generated documents older than `max_age_seconds` (default 24 hours).
+
+#### Routes
+
+##### `GET /`
+Renders the home page (`index.html`).
+
+##### `POST /generate`
+Handles form submission for documentation generation. Reads input type (`paste`, `file`, `github`), processes the input, calls `generate_docs`, stores the result in a temporary file, and redirects to `/result`.
+
+**Form fields:**
+- `input_type` – `paste`, `file`, or `github`.
+- `code` – Pasted code (for `paste`).
+- `files` – Uploaded files (for `file`).
+- `github_url` – GitHub URL (for `github`).
+- `branch` – Optional branch name.
+- `title`, `author`, `version`, `context`, `language` – Metadata.
+- `format` – Desired output format (`md`, `html`, `json`).
+- `api_key` – Optional API key override.
+
+**Returns:** Redirect to `/result` on success; renders `index.html` with an error message on failure.
+
+##### `GET /result`
+Displays the generated documentation as HTML (using `markdown_to_body_html`). Requires a `doc_id` in the session.
+
+##### `GET /download/<format>`
+Downloads the generated documentation in the specified format (`md`, `html`, or `json`). Sets appropriate MIME type and filename.
+
+**Main entry point:**
+```python
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
+```
 
 ---
+
+### Tests
+
+The `tests/` directory contains unit tests for most modules:
+
+- `test_ai_client.py` – Tests for `DeepSeekClient` (success, retries, failures).
+- `test_cli.py` – Tests for `markdown_to_json`, CLI help, and `ProgressSpinner`.
+- `test_config.py` – Tests for API key retrieval and client initialization.
+- `test_ingest.py` – Tests for file ingestion, folder traversal, and utilities.
+- `test_markdown_utils.py` – Tests for HTML rendering and escaping.
+- `test_web.py` – Tests for Flask routes (paste, GitHub, missing API key, failures).
+
+Run the test suite with:
+
+```bash
+pytest
+```
 
 ## Contributing
 
 Contributions are welcome! To contribute:
 
 1. Fork the repository.
-2. Create a new branch for your feature or fix.
-3. Write clear, tested code.
-4. Add or update tests under `tests/`.
-5. Run the test suite before submitting a pull request.
-6. Submit a pull request with a clear description of your changes.
+2. Create a feature branch: `git checkout -b feature/your-feature`.
+3. Write tests for new functionality (the project uses `pytest`).
+4. Ensure all tests pass: `pytest`.
+5. Submit a pull request with a clear description of your changes.
 
-Please keep code style consistent and include documentation updates where appropriate.
-
----
+Please follow the existing code style (PEP 8 for Python) and include docstrings for new public functions.
 
 ## License
 
-Not specified. If you intend to distribute this project, please add a license file (e.g., `LICENSE`) and update this section accordingly.
+No license file or header was detected in the provided code. The project is currently **not specified** under any license. Please contact the maintainers for licensing information.
